@@ -8,8 +8,7 @@ from main import create_app
 from config import load_config
 
 # Service and Models imports (absolute imports based on project structure)
-from drivers.drivers_service import create_driver, update_vehicle_details
-from drivers.drivers_models import Driver
+from drivers.drivers_service import create_driver, update_vehicle_details, DriverObject, DRIVERS_DB, CURRENT_ID
 
 
 @pytest.fixture
@@ -28,6 +27,17 @@ def test_db():
     Fixture to provide a mock Session object for database operations.
     """
     return MagicMock(spec=Session)
+
+
+@pytest.fixture(autouse=True)
+def reset_drivers_db():
+    """
+    Reset the drivers DB before each test.
+    """
+    global DRIVERS_DB, CURRENT_ID
+    DRIVERS_DB.clear()
+    CURRENT_ID = 1
+    yield
 
 
 def test_create_driver_success(test_db):
@@ -66,7 +76,7 @@ def test_create_driver_invalid_license(test_db):
         result = create_driver(name, license_number, vehicle_info)
     except ValueError as e:
         # For example, if the service raises a ValueError for an invalid license
-        assert "license" in str(e)
+        assert "license" in str(e).lower()  # Check the error message contains "license"
 
     # Assert
     # If the service handles invalid licenses by returning None or raising, confirm it here
@@ -80,30 +90,26 @@ def test_update_vehicle_details_success(test_db):
     Test updating a driver's vehicle details successfully.
     Verifies the new vehicle info is saved to the driver record.
     """
-    # Arrange
-    driver_id = 1
+    # Arrange 
+    name = "John Doe"
+    license_number = "XYZ98765" 
+    original_vehicle_info = {"make": "Old", "model": "Car", "year": 2010}
+    
+    # Create a driver in our service's database
+    driver = create_driver(name, license_number, original_vehicle_info)
+    driver_id = driver.id
+    
+    # New vehicle info
     new_vehicle_info = {"make": "Tesla", "model": "Model 3", "year": 2021}
+    
+    # Act
+    updated_driver = update_vehicle_details(driver_id, new_vehicle_info)
 
-    # Mock existing driver
-    mock_driver = Driver(
-        name="Alice",
-        license_number="XYZ98765",
-        vehicle_info={"make": "Old", "model": "Car", "year": 2010},
-    )
-    mock_driver.id = driver_id
-
-    # Patch the retrieval of driver from DB
-    with patch("drivers.drivers_service.Driver") as mock_driver_model:
-        mock_query = MagicMock()
-        mock_query.filter_by.return_value.first.return_value = mock_driver
-        mock_driver_model.query = mock_query
-
-        # Act
-        updated_driver = update_vehicle_details(driver_id, new_vehicle_info)
-
-        # Assert
-        assert updated_driver is not None
-        assert updated_driver.vehicle_info == new_vehicle_info
+    # Assert
+    assert updated_driver is not None
+    assert updated_driver.vehicle_info == new_vehicle_info
+    assert updated_driver.name == name
+    assert updated_driver.license_number == license_number
 
 
 def test_update_vehicle_details_driver_not_found(test_db):
@@ -112,17 +118,11 @@ def test_update_vehicle_details_driver_not_found(test_db):
     Ensures the service handles the missing record gracefully.
     """
     # Arrange
-    driver_id = 999
+    driver_id = 999  # A driver ID that doesn't exist
     new_vehicle_info = {"make": "Ford", "model": "Focus", "year": 2018}
 
-    # Patch the retrieval of driver from DB - returns None
-    with patch("drivers.drivers_service.Driver") as mock_driver_model:
-        mock_query = MagicMock()
-        mock_query.filter_by.return_value.first.return_value = None
-        mock_driver_model.query = mock_query
+    # Act
+    updated_driver = update_vehicle_details(driver_id, new_vehicle_info)
 
-        # Act
-        updated_driver = update_vehicle_details(driver_id, new_vehicle_info)
-
-        # Assert
-        assert updated_driver is None, "Expected None when driver does not exist."
+    # Assert
+    assert updated_driver is None, "Expected None when driver does not exist."

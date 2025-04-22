@@ -1,8 +1,11 @@
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# In-memory database for riders
+_in_memory_riders_db: Dict[int, Dict[str, Any]] = {}
+_next_id = 1
 
 def create_rider(name: str, phone_number: str, payment_method: str) -> dict:
     """
@@ -19,14 +22,21 @@ def create_rider(name: str, phone_number: str, payment_method: str) -> dict:
         raise ValueError("Invalid input. 'name', 'phone_number' and 'payment_method' are required.")
     
     try:
-        # TODO: Implement actual database logic to persist the rider
-        # Example: session.add(rider_record); session.commit()
+        global _next_id
+        
+        rider_id = _next_id
+        _next_id += 1
+        
         new_rider = {
-            "id": 1,  # Placeholder ID
+            "id": rider_id,
             "name": name,
             "phone_number": phone_number,
             "payment_method": payment_method
         }
+        
+        # Store in our in-memory database
+        _in_memory_riders_db[rider_id] = new_rider
+        
         logger.info("Rider created successfully.")
         return new_rider
     except Exception as e:
@@ -47,17 +57,8 @@ def fetch_rider(rider_id: int) -> Optional[dict]:
         raise ValueError("Invalid 'rider_id'. It must be a positive integer.")
     
     try:
-        # TODO: Implement actual database logic to fetch the rider
-        # Example: rider = session.query(Rider).filter_by(id=rider_id).first()
-        # return rider.as_dict() if rider else None
-        example_rider = {
-            "id": rider_id,
-            "name": "John Doe",
-            "phone_number": "123-456-7890",
-            "payment_method": "Credit Card"
-        }
-        # Placeholder logic
-        return example_rider if rider_id == 1 else None
+        # Get the rider from our in-memory database
+        return _in_memory_riders_db.get(rider_id)
     except Exception as e:
         logger.error("Error fetching rider with ID %d: %s", rider_id, str(e))
         raise

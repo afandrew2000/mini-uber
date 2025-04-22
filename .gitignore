@@ -1,5 +1,8 @@
 /node_modules
 /__pycache__
+**/__pycache__
+**/myenv
+**/node_modules
 *.pyc
 *.pyo
 *.pyd
