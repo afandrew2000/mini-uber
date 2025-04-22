@@ -58,6 +58,7 @@ def fetch_rider(rider_id: int) -> Optional[dict]:
     
     try:
         # Get the rider from our in-memory database
+
         return _in_memory_riders_db.get(rider_id)
     except Exception as e:
         logger.error("Error fetching rider with ID %d: %s", rider_id, str(e))

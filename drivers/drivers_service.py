@@ -50,7 +50,9 @@ def create_driver(name: str, license_number: str, vehicle_info: Dict[str, Any]) 
 
     return DriverObject(driver_id, name, license_number, vehicle_info)
 
+
 def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> Optional[DriverObject]:
+
     """
     Updates the driver's vehicle data.
 
@@ -59,6 +61,7 @@ def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> Opti
     :param driver_id: The unique identifier of the driver.
     :param vehicle_info: Dictionary containing vehicle information to update.
     :return: The updated driver object or None if driver not found.
+
     """
     logger.info("Updating vehicle details for driver with ID %s.", driver_id)
 
@@ -75,3 +78,4 @@ def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> Opti
         driver_data["license_number"], 
         driver_data["vehicle_info"]
     )
+
