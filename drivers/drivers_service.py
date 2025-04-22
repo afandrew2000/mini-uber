@@ -8,7 +8,15 @@ logging.basicConfig(level=logging.INFO)
 DRIVERS_DB: Dict[int, Dict[str, Any]] = {}
 CURRENT_ID = 1
 
-def create_driver(name: str, license_number: str, vehicle_info: Dict[str, Any]) -> int:
+class DriverObject:
+    """Object representation of a driver."""
+    def __init__(self, id: int, name: str, license_number: str, vehicle_info: Dict[str, Any]):
+        self.id = id
+        self.name = name
+        self.license_number = license_number
+        self.vehicle_info = vehicle_info
+
+def create_driver(name: str, license_number: str, vehicle_info: Dict[str, Any]) -> DriverObject:
     """
     Persists a new driver record.
 
@@ -18,7 +26,7 @@ def create_driver(name: str, license_number: str, vehicle_info: Dict[str, Any]) 
     :param name: The name of the driver.
     :param license_number: The driver's license number.
     :param vehicle_info: Dictionary containing vehicle information.
-    :return: The newly assigned driver ID.
+    :return: The newly created driver object.
     :raises ValueError: If the provided license number is invalid or name is empty.
     """
     # TODO: Implement license verification logic
@@ -40,9 +48,9 @@ def create_driver(name: str, license_number: str, vehicle_info: Dict[str, Any]) 
     CURRENT_ID += 1
     logger.info("Driver created successfully with ID %s.", driver_id)
 
-    return driver_id
+    return DriverObject(driver_id, name, license_number, vehicle_info)
 
-def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> None:
+def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> DriverObject:
     """
     Updates the driver's vehicle data.
 
@@ -50,12 +58,21 @@ def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> None
 
     :param driver_id: The unique identifier of the driver.
     :param vehicle_info: Dictionary containing vehicle information to update.
+    :return: The updated driver object or None if driver not found.
     :raises KeyError: If the driver ID does not exist in the database.
     """
     logger.info("Updating vehicle details for driver with ID %s.", driver_id)
 
     if driver_id not in DRIVERS_DB:
-        raise KeyError(f"Driver with ID {driver_id} does not exist.")
+        return None
 
     DRIVERS_DB[driver_id]["vehicle_info"] = vehicle_info
     logger.info("Vehicle details updated for driver with ID %s.", driver_id)
+    
+    driver_data = DRIVERS_DB[driver_id]
+    return DriverObject(
+        driver_id, 
+        driver_data["name"], 
+        driver_data["license_number"], 
+        driver_data["vehicle_info"]
+    )
