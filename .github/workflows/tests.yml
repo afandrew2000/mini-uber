@@ -33,12 +33,6 @@ jobs:
           pip install -r requirements.txt
         fi
         
-        # Install test requirements (except pytest which we've installed with specific version)
-        if [ -f tests/requirements.txt ]; then
-          echo "Installing test requirements (excluding pytest)..."
-          grep -v "pytest" tests/requirements.txt | xargs -r pip install
-        fi
-        
         # Ensure other necessary packages are installed
         pip install httpx fastapi
         
