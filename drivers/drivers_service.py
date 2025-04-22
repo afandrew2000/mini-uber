@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -50,7 +50,9 @@ def create_driver(name: str, license_number: str, vehicle_info: Dict[str, Any]) 
 
     return DriverObject(driver_id, name, license_number, vehicle_info)
 
-def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> DriverObject:
+
+def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> Optional[DriverObject]:
+
     """
     Updates the driver's vehicle data.
 
@@ -59,7 +61,7 @@ def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> Driv
     :param driver_id: The unique identifier of the driver.
     :param vehicle_info: Dictionary containing vehicle information to update.
     :return: The updated driver object or None if driver not found.
-    :raises KeyError: If the driver ID does not exist in the database.
+
     """
     logger.info("Updating vehicle details for driver with ID %s.", driver_id)
 
@@ -76,3 +78,4 @@ def update_vehicle_details(driver_id: int, vehicle_info: Dict[str, Any]) -> Driv
         driver_data["license_number"], 
         driver_data["vehicle_info"]
     )
+
