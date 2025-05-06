@@ -24,20 +24,28 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest pytest-json-report
+          pip install pytest pytest-json-report requests
 
       - name: Run Python tests
+        env:
+          TIMESTAMP: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
         run: |
-          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "Running pytest on all tests..."
+          
+          # Run pytest with JSON reporting
+          pytest tests/ --json-report --json-report-file=report.json -v | tee test_output.txt || true
+          
+          # Initialize results array
           echo "[" > test_results.json
           first_entry=true
           
           # Function to add a test result
           add_test_result() {
-            local module=$1
-            local category=$2
-            local test_name=$3
-            local status=$4
+            local module="$1"
+            local category="$2"
+            local test_name="$3"
+            local status="$4"
+            local output="$5"
             
             if [ "$first_entry" = "true" ]; then
               first_entry=false
@@ -45,74 +53,112 @@ jobs:
               echo "," >> test_results.json
             fi
             
-            echo '{
-              "module": "'$module'",
-              "category": "'$category'",
-              "test_name": "'$test_name'",
-              "status": "'$status'",
-              "attempted_at": "'$timestamp'",
-              "completed_at": "'$timestamp'"
-            }' >> test_results.json
+            # Escape the test output for JSON
+            escaped_output=$(echo "$output" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+            
+            cat >> test_results.json << EOF
+{
+  "module": "${module}",
+  "category": "${category}",
+  "test_name": "${test_name}",
+  "status": "${status}",
+  "output": ${escaped_output},
+  "attempted_at": "${TIMESTAMP}",
+  "completed_at": "${TIMESTAMP}"
+}
+EOF
           }
           
-          if [ -d "tests" ]; then
-            echo "Found tests directory, discovering tests..."
+          if [ -f "report.json" ]; then
+            echo "Processing test results from report.json..."
             
-            # Find all test files and their modules/categories
-            find tests -type f -name "test_*.py" | while read -r test_file; do
-              # Extract module and category from path
-              # Example: tests/module1/category1/test_something.py
-              # becomes module=module1, category=category1
-              path_parts=(${test_file//\// })
-              if [ ${#path_parts[@]} -ge 4 ]; then
-                module=${path_parts[1]}
-                category=${path_parts[2]}
-                test_name=${path_parts[-1]%.*} # Remove .py extension
-                
-                echo "Running tests for module: $module, category: $category, test: $test_name"
-                
-                # Run pytest for this specific test file with JSON reporting
-                if PYTHONPATH=. pytest "$test_file" --json-report --json-report-file=report.json -v > test_output.txt 2>&1; then
-                  # Parse the JSON report to get detailed test results
-                  if [ -f "report.json" ]; then
-                    test_status=$(python3 -c 'import json; print("passed" if json.load(open("report.json"))["summary"]["failed"] == 0 else "failed")')
-                  else
-                    test_status="passed"  # Default to passed if no report file
-                  fi
-                  add_test_result "$module" "$category" "$test_name" "$test_status"
-                else
-                  add_test_result "$module" "$category" "$test_name" "failed"
-                fi
-              fi
-            done
-            
-            if [ "$first_entry" = "true" ]; then
-              # No tests were found, add a placeholder result
-              add_test_result "unknown" "unknown" "No Tests Found" "not_attempted"
-            fi
+            # Parse the JSON report and extract test results
+            python3 << 'EOF' >> test_results.json
+import json
+import os
+from pathlib import Path
+
+def get_module_category(nodeid):
+    # Convert test path to parts
+    # Example: tests/module1/category1/test_feature.py::test_something
+    # becomes module=module1, category=category1
+    parts = nodeid.split("::", 1)[0].split("/")
+    if len(parts) >= 4:
+        return parts[1], parts[2]  # module, category
+    return "unknown", "unknown"
+
+# Read the report
+with open("report.json") as f:
+    report = json.load(f)
+
+# Read existing results file
+with open("test_results.json") as f:
+    content = f.read().strip()
+    if content == "[":  # If only opening bracket
+        first = True
+    else:
+        first = False
+        print(",")  # Add comma for new entries
+
+# Process each test
+for test in report.get("tests", []):
+    module, category = get_module_category(test["nodeid"])
+    name = test["nodeid"].split("::")[-1]
+    status = "passed" if test["outcome"] == "passed" else "failed"
+    
+    # Get the test output
+    output = test.get("call", {}).get("longrepr", "No detailed output available")
+    
+    # Create the test result entry
+    result = {
+        "module": module,
+        "category": category,
+        "test_name": name,
+        "status": status,
+        "output": output,
+        "attempted_at": os.environ["TIMESTAMP"],
+        "completed_at": os.environ["TIMESTAMP"]
+    }
+    
+    # Print the entry
+    if not first:
+        print(",")
+    print(json.dumps(result))
+    first = False
+EOF
           else
-            echo "No tests directory found"
-            add_test_result "setup" "initialization" "Test Directory Check" "failed"
+            echo "No test report found"
+            add_test_result "unknown" "unknown" "No Tests Found" "not_attempted" "No test report was generated"
           fi
           
           echo "]" >> test_results.json
           
           echo "Final test results:"
           cat test_results.json
-        continue-on-error: true
-      
-      # Upload test results
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: test_results.json
-          if-no-files-found: warn
+          
+          # Upload results to Supabase
+          echo "Uploading results to Supabase..."
+          
+          # Create the JSON payload properly
+          json_data=$(cat << EOF
+{
+  "id": "4600c943-a7f9-4efc-ad50-615921f9bf00",
+  "tests_status": $(cat test_results.json)
+}
+EOF
+)
+          
+          # Send the request
+          curl -X POST 'https://xqfwqvbfjhxwqgrdcjck.supabase.co/rest/v1/user_projects' \
+            -H "apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhxZndxdmJmamh4d3FncmRjamNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDI5MjE5NDEsImV4cCI6MjAxODQ5Nzk0MX0.ZNgjwuqmwXGdWwx3xV6EXG8pGHvpAxDOQOADxgMFSXc" \
+            -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhxZndxdmJmamh4d3FncmRjamNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDI5MjE5NDEsImV4cCI6MjAxODQ5Nzk0MX0.ZNgjwuqmwXGdWwx3xV6EXG8pGHvpAxDOQOADxgMFSXc" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            --data "$json_data"
 
-      # Notify completion
       - name: Notify completion
         if: always()
         run: |
-          echo "Test run completed. Check the test_results.json artifact for detailed results."
-          cat test_results.json || echo "No test results file found" 
+          echo "Test run completed. Results have been uploaded to Supabase."
+          echo "Test output:"
+          cat test_output.txt || echo "No test output available" 
