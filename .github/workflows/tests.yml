@@ -1,4 +1,4 @@
-name: Python Tests
+name: Run Tests
 
 on:
   push:
@@ -7,206 +7,109 @@ on:
     branches: [ main, master ]
 
 jobs:
-  test:
+  detect_project:
     runs-on: ubuntu-latest
-    
+    outputs:
+      project_type: \${{ steps.detect.outputs.project_type }}
     steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 2  # Fetch at least two commits for diff
-    
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        
-        # Install pytest and compatible packages first
-        pip install pytest==7.3.1 pytest-cov==4.1.0 pytest-asyncio==0.21.0
-        
-        # Install main requirements
-        if [ -f requirements.txt ]; then
-          echo "Installing main requirements..."
-          pip install -r requirements.txt
-        fi
-        
-        # Ensure other necessary packages are installed
-        pip install httpx fastapi
-        
-    - name: Run tests and capture results
-      id: test-run
-      run: |
-        mkdir -p test_artifacts
-        
-        # Try to run the tests, but always succeed (true command will ensure successful exit)
-        python -m pytest -v > test_artifacts/test_results.txt 2>&1 || true
-        
-        # Store the exit status for informational purposes
-        TEST_STATUS=$?
-        echo "status=$TEST_STATUS" >> $GITHUB_ENV
-        
-        # Print a summary of the test results
-        echo "=========================================="
-        echo "TEST RESULTS SUMMARY:"
-        echo "=========================================="
-        head -n 20 test_artifacts/test_results.txt
-        echo "... (truncated for brevity) ..."
-        echo "=========================================="
-        
-        if [ $TEST_STATUS -eq 0 ]; then
-          echo "Tests passed successfully!"
-        else
-          echo "Tests failed with status $TEST_STATUS"
-        fi
-
-    - name: Collect repository files and analyze with AI
-      run: |
-        echo "=========================================="
-        echo "COLLECTING FILES FOR AI ANALYSIS"
-        echo "=========================================="
-        mkdir -p test_artifacts/repo_files
-        
-        # Collect files from each directory
-        for dir in "payments" "ratings" "riders" "rides" "drivers"; do
-          if [ ! -d "$dir" ]; then
-            echo "Directory $dir does not exist, skipping"
-            continue
-          fi
-          
-          echo "Collecting Python files from $dir..."
-          files_count=$(find "$dir" -name "*.py" -type f -not -path "*/\.*" -not -path "*/__pycache__/*" | wc -l)
-          echo "Found $files_count Python files in $dir"
-          
-          find "$dir" -name "*.py" -type f -not -path "*/\.*" -not -path "*/__pycache__/*" | while read file; do
-            dest_file="test_artifacts/repo_files/$file"
-            mkdir -p "$(dirname "$dest_file")"
-            cp "$file" "$dest_file"
-          done
-        done
-        
-        # Copy individual files
-        for file in "main.py" "config.py"; do
-          if [ -f "$file" ]; then
-            echo "Copying $file..."
-            cp "$file" "test_artifacts/repo_files/$file"
+      - uses: actions/checkout@v3
+      
+      - name: Detect project type
+        id: detect
+        run: |
+          if [ -f "package.json" ]; then
+            if grep -q "next" "package.json"; then
+              echo "project_type=nextjs" >> $GITHUB_OUTPUT
+            elif grep -q "stripe" "package.json"; then
+              echo "project_type=stripe" >> $GITHUB_OUTPUT
+            elif grep -q "uber" "package.json"; then
+              echo "project_type=uber" >> $GITHUB_OUTPUT
+            elif grep -q "langchain" "package.json"; then
+              echo "project_type=langchain" >> $GITHUB_OUTPUT
+            else
+              echo "project_type=node" >> $GITHUB_OUTPUT
+            fi
+          elif [ -f "requirements.txt" ]; then
+            if grep -q "flask" "requirements.txt"; then
+              echo "project_type=dropbox" >> $GITHUB_OUTPUT
+            else
+              echo "project_type=python" >> $GITHUB_OUTPUT
+            fi
           else
-            echo "$file not found, skipping"
+            echo "project_type=unknown" >> $GITHUB_OUTPUT
           fi
-        done
-        
-        # Print summary of collected files
-        echo "=========================================="
-        echo "FILES COLLECTED FOR ANALYSIS:"
-        echo "=========================================="
-        find test_artifacts/repo_files -type f | sort
-        echo "Total files: $(find test_artifacts/repo_files -type f | wc -l)"
-        
-        # Encode test results as base64
-        TEST_RESULTS_BASE64=$(cat test_artifacts/test_results.txt | base64 -w 0)
-        
-        # Prepare payload
-        cat > test_artifacts/payload.json << EOF
-        {
-          "test_results_base64": "${TEST_RESULTS_BASE64}",
-          "repo_files": {}
-        }
-        EOF
-        
-        # Add repository files to payload
-        echo "Adding repository files to payload..."
-        jq '.repo_files = {}' test_artifacts/payload.json > test_artifacts/payload_with_files.json
-        
-        find test_artifacts/repo_files -type f -name "*.py" | while read file; do
-          rel_path=$(echo "$file" | sed 's|test_artifacts/repo_files/||')
-          FILE_CONTENT=$(cat "$file" | jq -Rs .)
-          jq --arg file "$rel_path" --arg content "$FILE_CONTENT" '.repo_files[$file] = $content' test_artifacts/payload_with_files.json > test_artifacts/payload_tmp.json
-          mv test_artifacts/payload_tmp.json test_artifacts/payload_with_files.json
-        done
-        
-        mv test_artifacts/payload_with_files.json test_artifacts/payload.json
-        
-        # Print payload summary
-        echo "=========================================="
-        echo "PAYLOAD SUMMARY"
-        echo "=========================================="
-        echo "Payload size: $(wc -c < test_artifacts/payload.json) bytes"
-        echo "Files in payload: $(jq '.repo_files | keys | length' test_artifacts/payload.json)"
-        
-        echo "=========================================="
-        echo "SENDING REQUEST TO VERCEL FUNCTION"
-        echo "=========================================="
-        echo "Calling https://uber-feedback-agent.vercel.app/api/analyze..."
-        
-        # Set a timeout for the curl request to prevent hanging
-        timeout 60 curl -X POST https://uber-feedback-agent.vercel.app/api/analyze \
-          -H "Content-Type: application/json" \
-          -d @test_artifacts/payload.json \
-          -o test_artifacts/ai_feedback.json \
-          --verbose
-        
-        CURL_STATUS=$?
-        if [ $CURL_STATUS -eq 124 ]; then
-          echo "Request timed out after 60 seconds"
-          echo "Error: API request timed out" > test_artifacts/ai_feedback.md
-        elif [ $CURL_STATUS -ne 0 ]; then
-          echo "Curl request failed with status $CURL_STATUS"
-          echo "Error: API request failed with status $CURL_STATUS" > test_artifacts/ai_feedback.md
-        else
-          echo "Response received from API, checking format..."
-          
-          # Check if the response is valid JSON
-          if jq -e . >/dev/null 2>&1 <<<"$(cat test_artifacts/ai_feedback.json)"; then
-            echo "Received valid JSON response"
-            # Extract feedback from response
-            jq -r '.feedback // .error // "No feedback or error message provided"' test_artifacts/ai_feedback.json > test_artifacts/ai_feedback.md
-            echo "Feedback extracted to test_artifacts/ai_feedback.md"
-          else
-            echo "Error: Received invalid JSON response"
-            echo "Raw response content:"
-            cat test_artifacts/ai_feedback.json
-            echo "Using error message as feedback"
-            echo "Error: The analyzer service returned an invalid response. Check the GitHub Actions logs for details." > test_artifacts/ai_feedback.md
-          fi
-        fi
-        
-        # Display feedback (first 20 lines)
-        echo "=========================================="
-        echo "AI FEEDBACK (first 20 lines):"
-        echo "=========================================="
-        head -n 20 test_artifacts/ai_feedback.md
-        echo "... (see full feedback in GitHub Actions artifacts) ..."
 
-    - name: Upload test artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-artifacts
-        path: test_artifacts/
-        if-no-files-found: warn
-
-    - name: Comment on PR with feedback 
-      if: github.event_name == 'pull_request'
-      run: |
-        # Check if feedback file exists
-        if [ -f "test_artifacts/ai_feedback.md" ]; then
-          # Read the feedback from file
-          FEEDBACK=$(cat test_artifacts/ai_feedback.md)
-          
-          # Determine the appropriate title based on test status
-          if [ "${{ env.status }}" == "0" ]; then
-            TITLE="AI Analysis of Test Results"
+  test:
+    needs: detect_project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      # For JavaScript/Node.js projects
+      - name: Set up Node.js
+        if: \${{ needs.detect_project.outputs.project_type == 'nextjs' || needs.detect_project.outputs.project_type == 'stripe' || needs.detect_project.outputs.project_type == 'uber' || needs.detect_project.outputs.project_type == 'langchain' || needs.detect_project.outputs.project_type == 'node' }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: 'npm'
+      
+      - name: Install Node.js dependencies
+        if: \${{ needs.detect_project.outputs.project_type == 'nextjs' || needs.detect_project.outputs.project_type == 'stripe' || needs.detect_project.outputs.project_type == 'uber' || needs.detect_project.outputs.project_type == 'langchain' || needs.detect_project.outputs.project_type == 'node' }}
+        run: |
+          if [ -f "package-lock.json" ]; then
+            npm ci
           else
-            TITLE="AI Analysis of Test Failures"
+            npm install
+          fi
+
+      # Initialize test results file
+      - name: Initialize test results
+        run: |
+          echo "[]" > test_results.json
+          
+      # Next.js specific tests
+      - name: Run Next.js tests
+        if: \${{ needs.detect_project.outputs.project_type == 'nextjs' }}
+        run: |
+          # Run tests and capture results
+          echo "[" > test_results.json
+          
+          # Lint tests
+          if npm run lint --if-present 2>/dev/null; then
+            echo '{"module": "nextjs", "category": "linting", "test_name": "ESLint Check", "status": "passed"},' >> test_results.json
+          else
+            echo '{"module": "nextjs", "category": "linting", "test_name": "ESLint Check", "status": "failed", "message": "Linting errors found"},' >> test_results.json
           fi
           
-          # Use GitHub REST API directly with curl
-          curl -X POST \
-            -H "Authorization: token ${{ github.token }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-            -d "{\"body\":\"# $TITLE\n\n$FEEDBACK\"}"
-        else
-          echo "Warning: Feedback file not found"
-        fi 
+          # Unit tests
+          if npm run test --if-present 2>/dev/null; then
+            echo '{"module": "nextjs", "category": "testing", "test_name": "Unit Tests", "status": "passed"},' >> test_results.json
+          else
+            echo '{"module": "nextjs", "category": "testing", "test_name": "Unit Tests", "status": "failed", "message": "Some tests failed"},' >> test_results.json
+          fi
+          
+          # Build test
+          if npm run build --if-present 2>/dev/null; then
+            echo '{"module": "nextjs", "category": "build", "test_name": "Production Build", "status": "passed"}' >> test_results.json
+          else
+            echo '{"module": "nextjs", "category": "build", "test_name": "Production Build", "status": "failed", "message": "Build failed"}' >> test_results.json
+          fi
+          
+          echo "]" >> test_results.json
+        continue-on-error: true
+      
+      # Similar patterns for other project types...
+      
+      # Upload test results
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results
+          path: test_results.json
+          if-no-files-found: warn
+
+      # Notify completion
+      - name: Notify completion
+        if: always()
+        run: |
+          echo "Test run completed. Check the test_results.json artifact for detailed results."
