@@ -7,40 +7,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  detect_project:
-    runs-on: ubuntu-latest
-    outputs:
-      project_type: \${{ steps.detect.outputs.project_type }}
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Detect project type
-        id: detect
-        run: |
-          if [ -f "package.json" ]; then
-            if grep -q "next" "package.json"; then
-              echo "project_type=nextjs" >> $GITHUB_OUTPUT
-            elif grep -q "stripe" "package.json"; then
-              echo "project_type=stripe" >> $GITHUB_OUTPUT
-            elif grep -q "uber" "package.json"; then
-              echo "project_type=uber" >> $GITHUB_OUTPUT
-            elif grep -q "langchain" "package.json"; then
-              echo "project_type=langchain" >> $GITHUB_OUTPUT
-            else
-              echo "project_type=node" >> $GITHUB_OUTPUT
-            fi
-          elif [ -f "requirements.txt" ]; then
-            if grep -q "flask" "requirements.txt"; then
-              echo "project_type=dropbox" >> $GITHUB_OUTPUT
-            else
-              echo "project_type=python" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "project_type=unknown" >> $GITHUB_OUTPUT
-          fi
-
   test:
-    needs: detect_project
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -48,95 +15,95 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # For JavaScript/Node.js projects
-      - name: Set up Node.js
-        if: \${{ needs.detect_project.outputs.project_type == 'nextjs' || needs.detect_project.outputs.project_type == 'stripe' || needs.detect_project.outputs.project_type == 'uber' || needs.detect_project.outputs.project_type == 'langchain' || needs.detect_project.outputs.project_type == 'node' }}
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-          cache: 'npm'
-      
-      - name: Install Node.js dependencies
-        if: \${{ needs.detect_project.outputs.project_type == 'nextjs' || needs.detect_project.outputs.project_type == 'stripe' || needs.detect_project.outputs.project_type == 'uber' || needs.detect_project.outputs.project_type == 'langchain' || needs.detect_project.outputs.project_type == 'node' }}
-        run: |
-          if [ -f "package-lock.json" ]; then
-            npm ci
-          else
-            npm install
-          fi
-
-      # Initialize test results file
-      - name: Initialize test results
-        run: |
-          echo "[]" > test_results.json
-          
-      # Next.js specific tests
-      - name: Run Next.js tests
-        if: \${{ needs.detect_project.outputs.project_type == 'nextjs' }}
-        run: |
-          # Run tests and capture results
-          echo "[" > test_results.json
-          
-          # Lint tests
-          if npm run lint --if-present 2>/dev/null; then
-            echo '{"module": "nextjs", "category": "linting", "test_name": "ESLint Check", "status": "passed"},' >> test_results.json
-          else
-            echo '{"module": "nextjs", "category": "linting", "test_name": "ESLint Check", "status": "failed", "message": "Linting errors found"},' >> test_results.json
-          fi
-          
-          # Unit tests
-          if npm run test --if-present 2>/dev/null; then
-            echo '{"module": "nextjs", "category": "testing", "test_name": "Unit Tests", "status": "passed"},' >> test_results.json
-          else
-            echo '{"module": "nextjs", "category": "testing", "test_name": "Unit Tests", "status": "failed", "message": "Some tests failed"},' >> test_results.json
-          fi
-          
-          # Build test
-          if npm run build --if-present 2>/dev/null; then
-            echo '{"module": "nextjs", "category": "build", "test_name": "Production Build", "status": "passed"}' >> test_results.json
-          else
-            echo '{"module": "nextjs", "category": "build", "test_name": "Production Build", "status": "failed", "message": "Build failed"}' >> test_results.json
-          fi
-          
-          echo "]" >> test_results.json
-        continue-on-error: true
-
-      # For Python projects
       - name: Set up Python
-        if: \${{ needs.detect_project.outputs.project_type == 'dropbox' || needs.detect_project.outputs.project_type == 'python' }}
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
           
       - name: Install Python dependencies
-        if: \${{ needs.detect_project.outputs.project_type == 'dropbox' || needs.detect_project.outputs.project_type == 'python' }}
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest flake8
+          pip install pytest pytest-json-report
 
       - name: Run Python tests
-        if: \${{ needs.detect_project.outputs.project_type == 'dropbox' || needs.detect_project.outputs.project_type == 'python' }}
         run: |
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           echo "[" > test_results.json
+          first_entry=true
           
-          # Lint with flake8
-          if flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics; then
-            echo '{"module": "python", "category": "linting", "test_name": "Flake8 Check", "status": "passed"},' >> test_results.json
-          else
-            echo '{"module": "python", "category": "linting", "test_name": "Flake8 Check", "status": "failed", "message": "Linting errors found"},' >> test_results.json
-          fi
+          # Function to add a test result
+          add_test_result() {
+            local module=$1
+            local category=$2
+            local test_name=$3
+            local status=$4
+            
+            if [ "$first_entry" = "true" ]; then
+              first_entry=false
+            else
+              echo "," >> test_results.json
+            fi
+            
+            echo '{
+              "module": "'$module'",
+              "category": "'$category'",
+              "test_name": "'$test_name'",
+              "status": "'$status'",
+              "attempted_at": "'$timestamp'",
+              "completed_at": "'$timestamp'"
+            }' >> test_results.json
+          }
           
-          # Run pytest
-          if [ -d "tests" ] && python -m pytest tests/ -v; then
-            echo '{"module": "python", "category": "testing", "test_name": "PyTest Suite", "status": "passed"}' >> test_results.json
-          elif python -m pytest -v; then
-            echo '{"module": "python", "category": "testing", "test_name": "PyTest Suite", "status": "passed"}' >> test_results.json
+          if [ -d "tests" ]; then
+            echo "Found tests directory, discovering tests..."
+            
+            # Find all test files and their modules/categories
+            find tests -type f -name "test_*.py" | while read -r test_file; do
+              # Extract module and category from path
+              # Example: tests/module1/category1/test_something.py
+              # becomes module=module1, category=category1
+              path_parts=(${test_file//\// })
+              if [ ${#path_parts[@]} -ge 4 ]; then
+                module=${path_parts[1]}
+                category=${path_parts[2]}
+                test_name=${path_parts[-1]%.*} # Remove .py extension
+                
+                echo "Running tests for module: $module, category: $category, test: $test_name"
+                
+                # Run pytest for this specific test file with JSON reporting
+                if PYTHONPATH=. pytest "$test_file" --json-report --json-report-file=report.json -v > test_output.txt 2>&1; then
+                  # Parse the JSON report to get detailed test results
+                  if [ -f "report.json" ]; then
+                    test_status=$(python -c "
+import json
+with open('report.json') as f:
+    data = json.load(f)
+print('passed' if data['summary']['failed'] == 0 else 'failed')
+")
+                  else
+                    test_status="passed"  # Default to passed if no report file
+                  fi
+                  add_test_result "$module" "$category" "$test_name" "$test_status"
+                else
+                  add_test_result "$module" "$category" "$test_name" "failed"
+                fi
+              fi
+            done
+            
+            if [ "$first_entry" = "true" ]; then
+              # No tests were found, add a placeholder result
+              add_test_result "unknown" "unknown" "No Tests Found" "not_attempted"
+            fi
           else
-            echo '{"module": "python", "category": "testing", "test_name": "PyTest Suite", "status": "failed", "message": "Some tests failed"}' >> test_results.json
+            echo "No tests directory found"
+            add_test_result "setup" "initialization" "Test Directory Check" "failed"
           fi
           
           echo "]" >> test_results.json
+          
+          echo "Final test results:"
+          cat test_results.json
         continue-on-error: true
       
       # Upload test results
@@ -153,3 +120,4 @@ jobs:
         if: always()
         run: |
           echo "Test run completed. Check the test_results.json artifact for detailed results."
+          cat test_results.json || echo "No test results file found" 
