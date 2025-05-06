@@ -75,12 +75,7 @@ jobs:
                 if PYTHONPATH=. pytest "$test_file" --json-report --json-report-file=report.json -v > test_output.txt 2>&1; then
                   # Parse the JSON report to get detailed test results
                   if [ -f "report.json" ]; then
-                    test_status=$(python3 -c '
-import json
-with open("report.json") as f:
-    data = json.load(f)
-print("passed" if data["summary"]["failed"] == 0 else "failed")
-')
+                    test_status=$(python3 -c 'import json; print("passed" if json.load(open("report.json"))["summary"]["failed"] == 0 else "failed")')
                   else
                     test_status="passed"  # Default to passed if no report file
                   fi
